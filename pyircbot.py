@@ -6,7 +6,7 @@ class IrcBot:
     _settings = {}
     _debug = None
     _client = "ArmedGuys IRC Bot"
-    _version = "0.1"
+    _version = "0.5"
     _env = "Python"
     _socket = None
     # Channels the bot is in
@@ -42,6 +42,18 @@ class IrcBot:
             self.out("NICK %s\r\n" % self._settings['nick'])
             self.out("USER %s %s bla :%s\r\n" % (self._settings['ident'], self._settings['host'], self._settings['realname']))
         
+    def reconnect(self): # reconnect assumes events are all intact, that socket is closed and that queue thread is still running
+        if self._messageThreadRunning == False and self._queueThreadRunning == True:
+            self._socket = socket.create_connection((self._settings['host'], self._settings['port']))
+            # before sending, create message & queue loops
+            self._messageThreadRunning = True # reset msgthread state
+            self.startMessageThread() # start message queue thread
+            
+            # begin connection
+            if "serverpassword" in self._settings:
+                self.out("PASS %s\r\n" % self._settings['serverpassword'])
+            self.out("NICK %s\r\n" % self._settings['nick'])
+            self.out("USER %s %s bla :%s\r\n" % (self._settings['ident'], self._settings['host'], self._settings['realname']))
     def startMessageThread(self):
         try:
             self._messageThread = threading.Thread(target=self.messageThread)
@@ -62,7 +74,11 @@ class IrcBot:
             try:
                 sockbuf = self._socket.recv(4096)
                 if sockbuf == "": # dead connection
+                    self._messageThreadRunning = False
                     self._queue.event(IrcEvent.BotLostConnection, None)
+                    self._socket.close()
+                    if "debug" in self._settings:
+                        self._debug.write("BOT LOST CONNECTION", "Unknown reason")
                 else:
                     sockbuf = tempbuf + sockbuf
                     if "\n" in sockbuf: # should always happen
@@ -77,8 +93,8 @@ class IrcBot:
             except:
                 print "exception: %s\n" % str(sys.exc_info())
                 self._messageThreadRunning = False
-                self._queueThreadRunning = False
                 self._socket.close()
+                self._queue.event(IrcEvent.BotLostConnection, None)
                 if "debug" in self._settings:
                     self._debug.write("MESSAGETHREAD EXCEPTION", str(sys.exc_info()))
                 
@@ -87,6 +103,7 @@ class IrcBot:
         while self._queueThreadRunning == True:
             next = self._queue.next()
             self._queue.Handle(next)
+            time.sleep(0.001)
             
 ######################################### EVENT HANDLER HANDLING HANDLE HANDLING HANDLE HAND #############
     def RegisterEventHandler(self, type, handler):
@@ -312,3 +329,65 @@ class DebugLog:
     def write(self, prefix, data):
         self.f.write("[%s] [%s]: %s\r\n" % (time.time(), prefix, data))
         self.f.flush()
+        
+        
+############# STANDARD BOT ROUTINES ##############
+class StandardBotRoutines:
+    _bot = None
+    _botSettings = None
+    
+    # channels to join
+    _channels = []
+    
+    # nickserv password to use
+    _nickservpassword = None
+    def __init__(self, bot, settings):
+        self._bot = bot
+        self._botSettings = settings
+        self._bot.RegisterEventHandler(IrcEvent.MessageRecieved, self.onMsgRecieved)
+    
+    # join channel and nickserv auth
+    def queueJoinChannels(self, channels):
+        self._channels = channels
+        
+    def queueNickServAuth(self, password):
+        self._nickservpassword = password
+    
+    # automatic reconnect after internet connection issue
+    def autoReconnect(self):
+        self._bot.RegisterEventHandler(IrcEvent.BotLostConnection, self.onLostConn)
+        
+    def onLostConn(self, type, data):
+        time.sleep(5)
+        print "reconnecting..."
+        self._bot.reconnect()
+    
+    # handles join and nickserv pw
+    def onMsgRecieved(self, type, data):
+        if type == IrcEvent.MessageRecieved and data.command == "376": # end MOTD, auth w/ NickServ and join channels
+            if self._nickservpassword != None:
+                self._bot.msg("NickServ", "IDENTIFY %s" % self._nickservpassword)
+            for channel in self._channels:
+                self._bot.join(channel)
+        
+############# TEST CODE ###############
+"""
+def bot_lost_connection_test(data1, data2):
+    print str(data2)
+if __name__ == "__main__":
+    settings = {
+        'host': "irc.rizon.net",
+        'port': 6667,
+        'nick': 'pyircbot',
+        'ident': 'pyircbot',
+        'realname': 'TheLeagueSpecialist',
+        'debug': True,
+    }
+    bot = create(settings)
+    standard = StandardBotRoutines(bot, settings)
+    standard.queueJoinChannels(["#Pie-Studios"])
+    standard.autoReconnect()
+    
+    bot.RegisterEventHandler(IrcEvent.BotLostConnection, bot_lost_connection_test)
+    bot.connect()
+"""
