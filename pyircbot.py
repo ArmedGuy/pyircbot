@@ -154,7 +154,9 @@ class IrcBot:
                 self._queue.event(IrcEvent.NickChanged, data)
                 
 ######################################### BOT CONTROL ####################################################
-    def exit(self):
+    def exit(self, message):
+        self.out("QUIT :%s" % message)
+        self._queueThreadRunning = False
         self._messageThreadRunning = False
         self._socket.close()
         
@@ -163,8 +165,8 @@ class IrcBot:
         if len(data) == 0: return
         if "debug" in self._settings:
             self._debug.write("SENT PACKET", data.rstrip())
-        if "\n" not in data:
-            data = data + "\n"
+        if "\r\n" not in data:
+            data = data + "\r\n"
         if self._socket:
             self._socket.send(data)
             
@@ -371,23 +373,27 @@ class StandardBotRoutines:
                 self._bot.join(channel)
         
 ############# TEST CODE ###############
-"""
-def bot_lost_connection_test(data1, data2):
-    print str(data2)
+
 if __name__ == "__main__":
+    def bot_lost_connection_test(data1, data2):
+        print str(data2)
+        
+    def user_joined(data1, data2):
+        bot.notice("#Pie-Studios", "Travis CI build currently running!")
+        bot.exit("Tests complete!")
     settings = {
         'host': "irc.rizon.net",
         'port': 6667,
         'nick': 'pyircbot',
         'ident': 'pyircbot',
         'realname': 'TheLeagueSpecialist',
-        'debug': True,
+        'debug': False,
     }
     bot = create(settings)
     standard = StandardBotRoutines(bot, settings)
     standard.queueJoinChannels(["#Pie-Studios"])
     standard.autoReconnect()
     
+    bot.RegisterEventHandler(IrcEvent.UserJoined, user_joined)
     bot.RegisterEventHandler(IrcEvent.BotLostConnection, bot_lost_connection_test)
     bot.connect()
-"""
